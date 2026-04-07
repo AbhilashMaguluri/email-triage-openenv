@@ -1,3 +1,12 @@
+---
+title: Email Triage OpenEnv
+emoji: 📧
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+---
+
 # OpenEnv Email Triage Environment
 
 An AI agent benchmarking environment built on the [OpenEnv](https://github.com/meta-pytorch/OpenEnv) framework. It simulates a real-world customer email triage workflow where an AI agent must **classify** incoming emails, **assign** priority levels, and **generate** appropriate replies -- then evaluates the agent's performance with deterministic grading across three difficulty tiers.
