@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from openai import OpenAI
 
 from env.environment import EmailTriageEnv, ACTION_SEQUENCE
 from env.models import Action, Observation
@@ -23,8 +23,9 @@ logging.basicConfig(
 logger = logging.getLogger("inference")
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
+HF_TOKEN = os.getenv("HF_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-MODEL_NAME = os.getenv("MODEL_NAME", "llama3-70b-8192")
 IMAGE_NAME = os.environ.get("IMAGE_NAME", "openenv/email-triage:latest")
 
 MAX_STEPS = 10
@@ -163,8 +164,8 @@ def _fallback_action(observation: Observation, step_index: int) -> Action:
     )
 
 
-async def generate_action(
-    client: AsyncOpenAI,
+def generate_action(
+    client: OpenAI,
     observation: Observation,
     step_index: int,
     history: list[dict[str, str]],
@@ -177,7 +178,7 @@ async def generate_action(
     messages.append({"role": "user", "content": user_msg})
 
     try:
-        response = await client.chat.completions.create(
+        response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
             temperature=0.0,
@@ -199,9 +200,9 @@ async def generate_action(
     return action
 
 
-async def run_episode(
+def run_episode(
     env: EmailTriageEnv,
-    client: AsyncOpenAI,
+    client: OpenAI,
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
 
@@ -217,7 +218,7 @@ async def run_episode(
     while not done and steps_taken < MAX_STEPS:
         step_index = env._step_index
 
-        action = await generate_action(client, observation, step_index, history)
+        action = generate_action(client, observation, step_index, history)
 
         result = env.step(action)
         steps_taken += 1
@@ -255,18 +256,18 @@ async def run_episode(
     }
 
 
-async def main() -> None:
-    client = AsyncOpenAI(
+def main() -> None:
+    client = OpenAI(
         base_url=API_BASE_URL,
         api_key=OPENAI_API_KEY,
     )
 
     env = EmailTriageEnv()
-    result = await run_episode(env, client)
+    result = run_episode(env, client)
 
     print("\n--- RESULT ---")
     print(json.dumps(result, indent=2, default=str))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
