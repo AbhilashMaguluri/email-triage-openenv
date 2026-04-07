@@ -12,6 +12,11 @@ class ActionRequest(BaseModel):
     content: str = ""
 
 
+@app.get("/")
+def root():
+    return {"message": "Email Triage API is running 🚀"}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
