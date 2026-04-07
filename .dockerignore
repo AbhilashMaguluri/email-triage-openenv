@@ -10,3 +10,4 @@ tests/
 test_*.py
 validate_*.py
 *.md
+!README.md

@@ -17,7 +17,7 @@ class ActionRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"message": "Email Triage API is running 🚀"}
+    return {"message": "Email Triage API running"}
 
 
 # ── Health ────────────────────────────────────────────────────
