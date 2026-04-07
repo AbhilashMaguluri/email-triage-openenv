@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import time
 from typing import Any
@@ -10,15 +9,6 @@ from openai import OpenAI
 
 from env.environment import EmailTriageEnv, ACTION_SEQUENCE
 from env.models import Action, Observation
-
-# ── Logging ───────────────────────────────────────────────────
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%H:%M:%S",
-)
-logger = logging.getLogger("inference")
 
 # ── Environment Variables (EXACT names & defaults) ────────────
 
@@ -66,50 +56,6 @@ Respond with ONLY a JSON object (no markdown, no explanation):
 
 Where <action> is the next required action in the pipeline.\
 """
-
-# ── Logging Helpers (STRICT [START] / [STEP] / [END] format) ──
-
-
-def log_start(email: str, model: str) -> None:
-    """[START] marker – emitted once at episode begin."""
-    logger.info("[START]")
-    logger.info("  model : %s", model)
-    logger.info("  email : %.80s...", email.replace("\n", " ") if len(email) > 80 else email)
-
-
-def log_step(
-    step: int,
-    action_type: str,
-    content: str,
-    reward: float,
-    done: bool,
-    info: dict[str, Any],
-) -> None:
-    """[STEP] marker – emitted after every environment step."""
-    match_str = "MATCH" if info.get("match") else "MISS"
-    if "error" in info:
-        match_str = "ERROR"
-    logger.info(
-        "[STEP] step=%d | action=%-16s | content=%-40s | reward=%+.2f | %s | done=%s",
-        step, action_type, content[:40], reward, match_str, done,
-    )
-
-
-def log_end(
-    steps_taken: int,
-    total_reward: float,
-    score: float,
-    success: bool,
-    elapsed: float,
-) -> None:
-    """[END] marker – emitted once at episode end."""
-    logger.info("[END]")
-    logger.info("  steps   : %d", steps_taken)
-    logger.info("  reward  : %.2f", total_reward)
-    logger.info("  score   : %.4f", score)
-    logger.info("  success : %s", success)
-    logger.info("  elapsed : %.2fs", elapsed)
-
 
 # ── Action Helpers ────────────────────────────────────────────
 
@@ -201,7 +147,6 @@ def generate_action(
 
     if action is None or (expected_action and action.action_type != expected_action):
         action = _fallback_action(observation, step_index)
-        logger.warning("  fallback | expected=%s | llm_gave=%s", expected_action, raw[:60])
 
     history.append({"role": "user", "content": user_msg})
     history.append({"role": "assistant", "content": json.dumps({"action_type": action.action_type, "content": action.content})})
@@ -219,7 +164,9 @@ def run_episode(
     t0 = time.perf_counter()
 
     observation = env.reset()
-    log_start(observation.email, MODEL_NAME)
+
+    # [START] — exactly one line
+    print(f"[START] task=email_triage env=email-triage-env model={MODEL_NAME}", flush=True)
 
     history: list[dict[str, str]] = []
     rewards: list[float] = []
@@ -238,14 +185,8 @@ def run_episode(
         rewards.append(result.reward)
         actions_taken.append({"action_type": action.action_type, "content": action.content or ""})
 
-        log_step(
-            step=steps_taken,
-            action_type=action.action_type,
-            content=action.content or "",
-            reward=result.reward,
-            done=result.done,
-            info=result.info,
-        )
+        # [STEP] — one line per step
+        print(f"[STEP] step={steps_taken} action={action.action_type} reward={result.reward:.2f} done={result.done}", flush=True)
 
         observation = result.observation
         done = result.done
@@ -253,9 +194,9 @@ def run_episode(
     total_reward = sum(rewards)
     score = max(0.0, min(1.0, total_reward / MAX_TOTAL_REWARD))
     success = score >= SUCCESS_THRESHOLD
-    elapsed = time.perf_counter() - t0
 
-    log_end(steps_taken, total_reward, score, success, elapsed)
+    # [END] — exactly one line
+    print(f"[END] success={success} steps={steps_taken} score={score:.4f}", flush=True)
 
     return {
         "score": round(score, 4),
@@ -278,10 +219,7 @@ def main() -> None:
     )
 
     env = EmailTriageEnv()
-    result = run_episode(env, client)
-
-    print("\n--- RESULT ---")
-    print(json.dumps(result, indent=2, default=str))
+    run_episode(env, client)
 
 
 if __name__ == "__main__":
