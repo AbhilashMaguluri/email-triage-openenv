@@ -1,0 +1,88 @@
+name: email-triage-env
+version: "1.0"
+description: >
+  AI Email Triage & Response Environment that classifies emails,
+  assigns priority, and generates replies.
+
+metadata:
+  author: Abhilash Maguluri
+  license: MIT
+  tags:
+    - email
+    - triage
+    - classification
+    - nlp
+
+entry_point: env.environment:EmailTriageEnv
+
+environment:
+  action_space:
+    type: discrete
+    actions:
+      - classify_email
+      - set_priority
+      - generate_reply
+  observation_space:
+    type: dict
+    fields:
+      email:
+        type: string
+        description: Raw email body text
+      category:
+        type: string
+        enum: [complaint, query, request]
+        nullable: true
+      priority:
+        type: string
+        enum: [high, medium, low]
+        nullable: true
+      reply:
+        type: string
+        nullable: true
+  max_steps: 10
+  max_reward: 1.0
+
+tasks:
+  - id: easy
+    name: Email Classification
+    description: Agent must correctly classify the email category.
+    entry_point: tasks.tasks:TASK_EASY
+    grader: tasks.tasks:_grade_easy
+    criteria:
+      - category
+    scoring:
+      category: 1.0
+
+  - id: medium
+    name: Email Classification + Priority
+    description: Agent must classify the email and set the correct priority.
+    entry_point: tasks.tasks:TASK_MEDIUM
+    grader: tasks.tasks:_grade_medium
+    criteria:
+      - category
+      - priority
+    scoring:
+      category: 0.5
+      priority: 0.5
+
+  - id: hard
+    name: Full Email Triage Pipeline
+    description: Agent must classify, set priority, and generate a reply.
+    entry_point: tasks.tasks:TASK_HARD
+    grader: tasks.tasks:_grade_hard
+    criteria:
+      - category
+      - priority
+      - reply
+    scoring:
+      category: 0.4
+      priority: 0.3
+      reply: 0.3
+
+build:
+  dockerfile: Dockerfile
+  requirements: requirements.txt
+
+deploy:
+  port: 8000
+  healthcheck: /health
