@@ -84,5 +84,5 @@ build:
   requirements: requirements.txt
 
 deploy:
-  port: 8000
+  port: 7860
   healthcheck: /health

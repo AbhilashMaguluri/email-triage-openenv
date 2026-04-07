@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
 import time
 from typing import Any
 
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from env.environment import EmailTriageEnv, ACTION_SEQUENCE
 from env.models import Action, Observation
 
-load_dotenv()
+# ── Logging ───────────────────────────────────────────────────
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,15 +20,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("inference")
 
+# ── Environment Variables (EXACT names & defaults) ────────────
+
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
 HF_TOKEN = os.getenv("HF_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-IMAGE_NAME = os.environ.get("IMAGE_NAME", "openenv/email-triage:latest")
+
+# ── Constants ─────────────────────────────────────────────────
 
 MAX_STEPS = 10
 MAX_TOTAL_REWARD = 1.0
 SUCCESS_THRESHOLD = 0.8
+
+# ── System Prompt ─────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
 You are an email triage agent. You process customer emails in a strict 3-step pipeline.
@@ -64,14 +67,14 @@ Respond with ONLY a JSON object (no markdown, no explanation):
 Where <action> is the next required action in the pipeline.\
 """
 
+# ── Logging Helpers (STRICT [START] / [STEP] / [END] format) ──
 
-def log_start(email: str, model: str, image: str) -> None:
-    logger.info("=" * 60)
-    logger.info("EPISODE START")
+
+def log_start(email: str, model: str) -> None:
+    """[START] marker – emitted once at episode begin."""
+    logger.info("[START]")
     logger.info("  model : %s", model)
-    logger.info("  image : %s", image)
     logger.info("  email : %.80s...", email.replace("\n", " ") if len(email) > 80 else email)
-    logger.info("=" * 60)
 
 
 def log_step(
@@ -82,11 +85,12 @@ def log_step(
     done: bool,
     info: dict[str, Any],
 ) -> None:
+    """[STEP] marker – emitted after every environment step."""
     match_str = "MATCH" if info.get("match") else "MISS"
     if "error" in info:
         match_str = "ERROR"
     logger.info(
-        "  step %d | %-16s | %-40s | reward=%+.2f | %s | done=%s",
+        "[STEP] step=%d | action=%-16s | content=%-40s | reward=%+.2f | %s | done=%s",
         step, action_type, content[:40], reward, match_str, done,
     )
 
@@ -98,14 +102,16 @@ def log_end(
     success: bool,
     elapsed: float,
 ) -> None:
-    logger.info("=" * 60)
-    logger.info("EPISODE END")
+    """[END] marker – emitted once at episode end."""
+    logger.info("[END]")
     logger.info("  steps   : %d", steps_taken)
     logger.info("  reward  : %.2f", total_reward)
     logger.info("  score   : %.4f", score)
     logger.info("  success : %s", success)
     logger.info("  elapsed : %.2fs", elapsed)
-    logger.info("=" * 60)
+
+
+# ── Action Helpers ────────────────────────────────────────────
 
 
 def _build_user_message(observation: Observation, step_index: int) -> str:
@@ -164,6 +170,9 @@ def _fallback_action(observation: Observation, step_index: int) -> Action:
     )
 
 
+# ── Action Generation (OpenAI client) ────────────────────────
+
+
 def generate_action(
     client: OpenAI,
     observation: Observation,
@@ -200,6 +209,9 @@ def generate_action(
     return action
 
 
+# ── Episode Runner ────────────────────────────────────────────
+
+
 def run_episode(
     env: EmailTriageEnv,
     client: OpenAI,
@@ -207,7 +219,7 @@ def run_episode(
     t0 = time.perf_counter()
 
     observation = env.reset()
-    log_start(observation.email, MODEL_NAME, IMAGE_NAME)
+    log_start(observation.email, MODEL_NAME)
 
     history: list[dict[str, str]] = []
     rewards: list[float] = []
@@ -254,6 +266,9 @@ def run_episode(
         "actions": actions_taken,
         "final_state": env.state(),
     }
+
+
+# ── Main Entry Point ─────────────────────────────────────────
 
 
 def main() -> None:
