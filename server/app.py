@@ -69,3 +69,14 @@ def step_get(
     content: str = Query("", description="Action content"),
 ):
     return _do_step(action_type=action_type, content=content)
+
+
+# ── CLI Entry Point ──────────────────────────────────────────
+
+def main():
+    import uvicorn
+    uvicorn.run("server.app:app", host="0.0.0.0", port=7860)
+
+
+if __name__ == "__main__":
+    main()
