@@ -43,41 +43,17 @@ environment:
   max_reward: 1.0
 
 tasks:
-  - id: easy
-    name: Email Classification
-    description: Agent must correctly classify the email category.
-    entry_point: tasks.tasks:TASK_EASY
-    grader: tasks.tasks:_grade_easy
-    criteria:
-      - category
-    scoring:
-      category: 1.0
+  easy:
+    entry_point: tasks.tasks:easy_task
+    grader: tasks.tasks:easy_grader
 
-  - id: medium
-    name: Email Classification + Priority
-    description: Agent must classify the email and set the correct priority.
-    entry_point: tasks.tasks:TASK_MEDIUM
-    grader: tasks.tasks:_grade_medium
-    criteria:
-      - category
-      - priority
-    scoring:
-      category: 0.5
-      priority: 0.5
+  medium:
+    entry_point: tasks.tasks:medium_task
+    grader: tasks.tasks:medium_grader
 
-  - id: hard
-    name: Full Email Triage Pipeline
-    description: Agent must classify, set priority, and generate a reply.
-    entry_point: tasks.tasks:TASK_HARD
-    grader: tasks.tasks:_grade_hard
-    criteria:
-      - category
-      - priority
-      - reply
-    scoring:
-      category: 0.4
-      priority: 0.3
-      reply: 0.3
+  hard:
+    entry_point: tasks.tasks:hard_task
+    grader: tasks.tasks:hard_grader
 
 build:
   dockerfile: Dockerfile
