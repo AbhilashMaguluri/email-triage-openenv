@@ -192,7 +192,8 @@ def run_episode(
         done = result.done
 
     total_reward = sum(rewards)
-    score = max(0.0, min(1.0, total_reward / MAX_TOTAL_REWARD))
+    # Clamp strictly to (0, 1) — validator rejects 0.0 and 1.0
+    score = max(0.01, min(0.99, total_reward / MAX_TOTAL_REWARD))
     success = score >= SUCCESS_THRESHOLD
 
     # [END] — exactly one line
