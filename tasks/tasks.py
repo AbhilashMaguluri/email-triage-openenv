@@ -9,7 +9,8 @@ Three difficulty tiers evaluate an agent's ability to triage emails:
 * **Hard**   – classify + set priority + draft reply   (3 criteria)
 
 Each task ships with a *deterministic* grader that inspects the
-environment state after execution and returns a score in [0.0, 1.0].
+environment state after execution and returns a score in (0.0, 1.0)
+(strictly between 0 and 1 — never exactly 0.0 or 1.0).
 
 Public API
 ----------
@@ -39,8 +40,24 @@ class TaskDifficulty(str, Enum):
     HARD = "hard"
 
 
-# A Grader receives the environment state dict and returns 0.0–1.0.
+# A Grader receives the environment state dict and returns a float in (0, 1).
 Grader = Callable[[dict[str, Any]], float]
+
+
+def _clamp_score(raw: float) -> float:
+    """Clamp a raw score to the open interval (0, 1).
+
+    The OpenEnv validator rejects scores that are exactly 0.0 or 1.0.
+    This helper maps:
+        0.0  → 0.01
+        1.0  → 0.99
+        other → value clamped to [0.01, 0.99]
+    """
+    if raw >= 1.0:
+        return 0.99
+    if raw <= 0.0:
+        return 0.01
+    return max(0.01, min(0.99, raw))
 
 
 # ──────────────────────────────────────────────────────────────
@@ -48,17 +65,19 @@ Grader = Callable[[dict[str, Any]], float]
 # ──────────────────────────────────────────────────────────────
 
 def _grade_easy(state: dict[str, Any]) -> float:
-    """Score 1.0 if the category matches, else 0.0."""
+    """Score 0.99 if the category matches, else 0.01."""
     obs = state["observation"]
     expected = state["expected"]
-    return 1.0 if obs.get("category") == expected["category"] else 0.0
+    raw = 1.0 if obs.get("category") == expected["category"] else 0.0
+    return _clamp_score(raw)
 
 
 def _grade_medium(state: dict[str, Any]) -> float:
     """
-    Score breakdown (max 1.0):
+    Score breakdown (max 0.99):
         +0.5  correct category
         +0.5  correct priority
+    Result is clamped to (0, 1) exclusive.
     """
     obs = state["observation"]
     expected = state["expected"]
@@ -67,15 +86,16 @@ def _grade_medium(state: dict[str, Any]) -> float:
         score += 0.5
     if obs.get("priority") == expected["priority"]:
         score += 0.5
-    return score
+    return _clamp_score(score)
 
 
 def _grade_hard(state: dict[str, Any]) -> float:
     """
-    Score breakdown (max 1.0):
+    Score breakdown (max 0.99):
         +0.4  correct category
         +0.3  correct priority
         +0.3  correct reply (exact match)
+    Result is clamped to (0, 1) exclusive.
     """
     obs = state["observation"]
     expected = state["expected"]
@@ -86,7 +106,7 @@ def _grade_hard(state: dict[str, Any]) -> float:
         score += 0.3
     if obs.get("reply") == expected["reply"]:
         score += 0.3
-    return score
+    return _clamp_score(score)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -98,14 +118,14 @@ class TaskResult:
     """Immutable result produced after a task is executed and graded."""
     task_name: str
     difficulty: TaskDifficulty
-    score: float           # grader output in [0.0, 1.0]
+    score: float           # grader output in (0.0, 1.0) exclusive
     max_score: float       # always 1.0 for normalised grading
     details: dict[str, Any] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
-        """True when the agent achieved the maximum possible score."""
-        return self.score >= self.max_score
+        """True when the agent achieved the maximum possible score (≥0.99)."""
+        return self.score >= 0.99
 
     def __repr__(self) -> str:
         status = "PASS" if self.passed else "FAIL"
@@ -318,9 +338,9 @@ def run_all_tasks(
     >>> scores = run_all_tasks()
     >>> for level, result in scores.items():
     ...     print(f"{level}: {result.score}")
-    easy: 1.0
-    medium: 1.0
-    hard: 1.0
+    easy: 0.99
+    medium: 0.99
+    hard: 0.99
     """
     env = env or EmailTriageEnv()
     return {
