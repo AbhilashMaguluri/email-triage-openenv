@@ -44,20 +44,28 @@ class TaskDifficulty(str, Enum):
 Grader = Callable[[dict[str, Any]], float]
 
 
-def _clamp_score(raw: float) -> float:
-    """Clamp a raw score to the open interval (0, 1).
+# ──────────────────────────────────────────────────────────────
+# Score Normalization (BULLETPROOF)
+# ──────────────────────────────────────────────────────────────
 
-    The OpenEnv validator rejects scores that are exactly 0.0 or 1.0.
-    This helper maps:
-        0.0  → 0.01
-        1.0  → 0.99
-        other → value clamped to [0.01, 0.99]
+def normalize_score(score: float) -> float:
+    """Force any score into the strict open interval (0, 1).
+
+    The OpenEnv validator **rejects** scores that are exactly 0.0 or 1.0.
+    This helper guarantees:
+        score >= 1.0  →  0.99
+        score <= 0.0  →  0.01
+        otherwise     →  clamped to [0.01, 0.99]
     """
-    if raw >= 1.0:
+    if score >= 1.0:
         return 0.99
-    if raw <= 0.0:
+    if score <= 0.0:
         return 0.01
-    return max(0.01, min(0.99, raw))
+    return max(0.01, min(0.99, float(score)))
+
+
+# Keep legacy alias for backward compat
+_clamp_score = normalize_score
 
 
 # ──────────────────────────────────────────────────────────────
@@ -68,8 +76,8 @@ def _grade_easy(state: dict[str, Any]) -> float:
     """Score 0.99 if the category matches, else 0.01."""
     obs = state["observation"]
     expected = state["expected"]
-    raw = 1.0 if obs.get("category") == expected["category"] else 0.0
-    return _clamp_score(raw)
+    raw = 0.99 if obs.get("category") == expected["category"] else 0.01
+    return normalize_score(raw)
 
 
 def _grade_medium(state: dict[str, Any]) -> float:
@@ -86,7 +94,7 @@ def _grade_medium(state: dict[str, Any]) -> float:
         score += 0.5
     if obs.get("priority") == expected["priority"]:
         score += 0.5
-    return _clamp_score(score)
+    return normalize_score(score)
 
 
 def _grade_hard(state: dict[str, Any]) -> float:
@@ -106,7 +114,7 @@ def _grade_hard(state: dict[str, Any]) -> float:
         score += 0.3
     if obs.get("reply") == expected["reply"]:
         score += 0.3
-    return _clamp_score(score)
+    return normalize_score(score)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -179,12 +187,15 @@ class Task:
                 break
 
         state = env.state()
-        score = self.grader(state)
+        raw_score = self.grader(state)
+
+        # BULLETPROOF: normalize again even though graders already do it
+        final_score = normalize_score(raw_score)
 
         return TaskResult(
             task_name=self.name,
             difficulty=self.difficulty,
-            score=round(score, 2),
+            score=round(final_score, 4),
             max_score=self.max_score,
             details={
                 "observation": state["observation"],
@@ -301,19 +312,23 @@ TASK_HARD = Task(
 # ──────────────────────────────────────────────────────────────
 # Task Registry & Public API
 # ──────────────────────────────────────────────────────────────
+# CRITICAL: Use plain STRING keys so validators can discover tasks
+# by iterating TASK_REGISTRY.keys() and finding ["easy", "medium", "hard"].
 
-TASK_REGISTRY: dict[TaskDifficulty, Task] = {
-    TaskDifficulty.EASY: TASK_EASY,
-    TaskDifficulty.MEDIUM: TASK_MEDIUM,
-    TaskDifficulty.HARD: TASK_HARD,
+TASK_REGISTRY: dict[str, Task] = {
+    "easy": TASK_EASY,
+    "medium": TASK_MEDIUM,
+    "hard": TASK_HARD,
 }
+
+# Debug: confirm all 3 tasks are registered at import time
+print("TASKS:", list(TASK_REGISTRY.keys()))
 
 
 def get_task(difficulty: TaskDifficulty | str) -> Task:
     """Retrieve a task by its difficulty level."""
-    if isinstance(difficulty, str):
-        difficulty = TaskDifficulty(difficulty)
-    return TASK_REGISTRY[difficulty]
+    key = difficulty.value if isinstance(difficulty, TaskDifficulty) else str(difficulty)
+    return TASK_REGISTRY[key]
 
 
 def run_task(
@@ -343,7 +358,13 @@ def run_all_tasks(
     hard: 0.99
     """
     env = env or EmailTriageEnv()
-    return {
-        difficulty.value: task.execute(env)
-        for difficulty, task in TASK_REGISTRY.items()
-    }
+    results: dict[str, TaskResult] = {}
+    for task_id, task in TASK_REGISTRY.items():
+        result = task.execute(env)
+        # FINAL SAFETY: ensure no score escapes the (0, 1) range
+        assert 0.0 < result.score < 1.0, (
+            f"Score for task '{task_id}' is {result.score}, "
+            f"which is outside the strict (0, 1) range!"
+        )
+        results[task_id] = result
+    return results
