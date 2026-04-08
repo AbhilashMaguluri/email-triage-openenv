@@ -1,5 +1,11 @@
+spec_version: 1
 name: email-triage-env
 version: "1.0"
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860
+
 description: >
   AI Email Triage & Response Environment that classifies emails,
   assigns priority, and generates replies.
@@ -43,17 +49,29 @@ environment:
   max_reward: 1.0
 
 tasks:
-  easy:
+  - id: easy
     entry_point: tasks.tasks:easy_task
     grader: tasks.tasks:easy_grader
+    description: Classify a single email into the correct category.
+    scoring:
+      category: 1.0
 
-  medium:
+  - id: medium
     entry_point: tasks.tasks:medium_task
     grader: tasks.tasks:medium_grader
+    description: Classify an email and assign the correct priority.
+    scoring:
+      category: 0.5
+      priority: 0.5
 
-  hard:
+  - id: hard
     entry_point: tasks.tasks:hard_task
     grader: tasks.tasks:hard_grader
+    description: Full triage pipeline - classify, prioritize, and reply.
+    scoring:
+      category: 0.4
+      priority: 0.3
+      reply: 0.3
 
 build:
   dockerfile: Dockerfile
