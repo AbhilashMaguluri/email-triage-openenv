@@ -12,10 +12,10 @@ from env.models import Action, Observation
 
 # ── Environment Variables (EXACT names & defaults) ────────────
 
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
-HF_TOKEN = os.getenv("HF_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.groq.com/openai/v1")
+API_KEY = os.environ.get("API_KEY", "")
+MODEL_NAME = os.environ.get("MODEL_NAME", "llama-3.3-70b-versatile")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 # ── Constants ─────────────────────────────────────────────────
 
@@ -215,7 +215,7 @@ def run_episode(
 def main() -> None:
     client = OpenAI(
         base_url=API_BASE_URL,
-        api_key=OPENAI_API_KEY,
+        api_key=API_KEY,
     )
 
     env = EmailTriageEnv()
