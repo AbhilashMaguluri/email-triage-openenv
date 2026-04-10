@@ -6,7 +6,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from env.environment import ACTION_SEQUENCE, EmailTriageEnv
+from env.environment import ACTION_SEQUENCE, EmailTriageEnv, derive_email_expectations
 from env.models import Action, Observation
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
@@ -97,32 +97,23 @@ def _parse_action(raw: str) -> Action | None:
 
 
 def _fallback_action(observation: Observation, step_index: int) -> Action:
-    email_lower = observation.email.lower()
+    expected = derive_email_expectations(observation.email)
 
     if step_index == 0:
-        if any(keyword in email_lower for keyword in ("refund", "damaged", "unacceptable")):
-            return Action(action_type="classify_email", content="complaint")
-        if any(keyword in email_lower for keyword in ("how", "status", "where", "when", "password")):
-            return Action(action_type="classify_email", content="query")
-        return Action(action_type="classify_email", content="request")
-
-    if step_index == 1:
-        priority_map = {"complaint": "high", "query": "medium"}
         return Action(
-            action_type="set_priority",
-            content=priority_map.get((observation.category or "").lower(), "low"),
+            action_type="classify_email",
+            content=expected["category"],
         )
 
-    reply_map = {
-        "high": "We are processing your refund.",
-        "medium": "Your query has been noted and we will respond shortly.",
-    }
+    if step_index == 1:
+        return Action(
+            action_type="set_priority",
+            content=expected["priority"],
+        )
+
     return Action(
         action_type="generate_reply",
-        content=reply_map.get(
-            (observation.priority or "").lower(),
-            "We have received your request and will follow up.",
-        ),
+        content=expected["reply"],
     )
 
 

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from env.environment import derive_email_expectations
 from grader import safe_grade
 from task_generator import DEFAULT_TASK_COUNT, DEFAULT_TASK_SEED, generate_tasks
 
@@ -30,21 +31,17 @@ if __name__ != "__main__" and _PACKAGE_DIR.is_dir():
 
 
 def model(input_text: str | None) -> str:
-    normalized = " ".join(str(input_text or "").strip().lower().split())
+    normalized = " ".join(str(input_text or "").strip().split())
 
     if not normalized:
-        return "normal"
-    if "free" in normalized or "offer" in normalized:
-        return "spam"
-    if "bank" in normalized or "password" in normalized:
-        return "important"
-    return "normal"
+        return "request"
+    return derive_email_expectations(normalized)["category"]
 
 
 def _coerce_task(task: dict[str, Any]) -> dict[str, str]:
     task_id = str(task.get("id") or "").strip() or "email-task-unknown"
     task_input = str(task.get("input") or "").strip()
-    expected_output = str(task.get("expected_output") or "").strip().lower() or "normal"
+    expected_output = str(task.get("expected_output") or "").strip().lower() or "request"
     return {
         "id": task_id,
         "input": task_input,

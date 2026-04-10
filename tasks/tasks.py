@@ -9,12 +9,13 @@ from task_generator import (
     generate_tasks as _generate_tasks,
 )
 
-TaskDict = dict[str, str]
+TaskDict = dict[str, Any]
 GraderFn = Callable[..., float]
+PASSING_SCORE = 0.75
 
 
 class TaskObject(dict):
-    def __call__(self) -> dict[str, str]:
+    def __call__(self) -> dict[str, Any]:
         return dict(self)
 
 
@@ -31,13 +32,22 @@ def generate_tasks(
 
 
 def _clone_task(task: TaskDict) -> TaskDict:
-    return TaskObject(
+    cloned: TaskDict = TaskObject(
         {
             "id": str(task["id"]),
+            "instruction": str(task.get("instruction", "")),
             "input": str(task["input"]),
             "expected_output": str(task["expected_output"]),
+            "expected_category": str(
+                task.get("expected_category", task["expected_output"])
+            ),
+            "expected_priority": str(task.get("expected_priority", "")),
+            "expected_reply": str(task.get("expected_reply", "")),
+            "benchmark": str(task.get("benchmark", "email-triage-env")),
+            "score": float(task.get("score", 0.95)),
         }
     )
+    return cloned
 
 
 def _default_task_bank() -> list[TaskDict]:
@@ -51,8 +61,6 @@ def _extract_info(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, An
     for value in args:
         if isinstance(value, dict):
             info.update(value)
-        elif isinstance(value, str) and "output" not in info:
-            info["output"] = value
         elif value is not None and "output" not in info:
             info["output"] = value
 
@@ -112,19 +120,21 @@ TASKS: list[dict[str, Any]] = []
 TASK_REGISTRY: dict[str, dict[str, Any]] = {}
 ENTRYPOINT_NAMES: list[str] = []
 
+
+def _make_task_loader(task_snapshot: TaskDict) -> Callable[[], TaskDict]:
+    def _loader() -> TaskDict:
+        return _clone_task(task_snapshot)
+
+    return _loader
+
+
 for index, task in enumerate(DEFAULT_TASK_OBJECTS, start=1):
     task_copy = _clone_task(task)
     grader = _build_task_grader(task_copy)
     task_name = f"generated_task_{index}"
     grader_name = f"generated_grader_{index}"
-
-    def _make_task_loader(task_snapshot: TaskDict) -> Callable[[], TaskDict]:
-        def _loader() -> TaskDict:
-            return _clone_task(task_snapshot)
-
-        return _loader
-
     task_loader = _make_task_loader(task_copy)
+
     task_loader.__name__ = task_name
     grader.__name__ = grader_name
 
@@ -137,9 +147,14 @@ for index, task in enumerate(DEFAULT_TASK_OBJECTS, start=1):
             "task": task_loader(),
             "task_fn": task_loader,
             "grader": grader,
+            "score": task_copy["score"],
         }
     )
-    TASK_REGISTRY[task_copy["id"]] = {"task": task_loader, "grader": grader}
+    TASK_REGISTRY[task_copy["id"]] = {
+        "task": task_loader,
+        "grader": grader,
+        "score": task_copy["score"],
+    }
 
 
 def _task_from_index(index: int) -> TaskDict:
@@ -200,15 +215,16 @@ def get_grader(name: str | int) -> GraderFn:
 
 
 def model(input_text: str | None) -> str:
-    normalized = " ".join(str(input_text or "").strip().lower().split())
-
+    normalized = " ".join(str(input_text or "").strip().split())
     if not normalized:
-        return "normal"
-    if "free" in normalized or "offer" in normalized:
-        return "spam"
-    if "bank" in normalized or "password" in normalized:
-        return "important"
-    return "normal"
+        return "request"
+
+    normalized_lower = normalized.lower()
+    if any(keyword in normalized_lower for keyword in ("refund", "unacceptable", "damaged")):
+        return "complaint"
+    if any(keyword in normalized_lower for keyword in ("status", "how", "where", "when", "password")):
+        return "query"
+    return "request"
 
 
 def run_task(task_name: str | int | TaskDict) -> dict[str, Any]:
@@ -225,7 +241,7 @@ def run_task(task_name: str | int | TaskDict) -> dict[str, Any]:
         "task": task,
         "output": output,
         "score": score,
-        "passed": score >= 0.7,
+        "passed": score >= PASSING_SCORE,
     }
 
 

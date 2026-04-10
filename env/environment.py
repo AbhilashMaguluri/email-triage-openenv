@@ -7,52 +7,40 @@ from .models import Action, Observation, StepResult
 
 SAMPLE_EMAILS: list[dict[str, str]] = [
     {
+        "id": "refund-damaged-order",
         "body": "I want a refund for my last order. The product was damaged.",
-        "expected_category": "complaint",
-        "expected_priority": "high",
-        "expected_reply": "We are processing your refund.",
     },
     {
+        "id": "order-status-question",
         "body": "Can you tell me the status of my order #12345?",
-        "expected_category": "query",
-        "expected_priority": "medium",
-        "expected_reply": "Your order is being prepared and will ship soon.",
     },
     {
+        "id": "enterprise-demo-request",
         "body": "I'd like to request a demo of your enterprise plan.",
-        "expected_category": "request",
-        "expected_priority": "low",
-        "expected_reply": "We'd be happy to schedule a demo for you.",
     },
     {
+        "id": "urgent-refund-complaint",
         "body": "This is unacceptable! I demand a refund immediately.",
-        "expected_category": "complaint",
-        "expected_priority": "high",
-        "expected_reply": "We are processing your refund.",
     },
     {
+        "id": "password-reset-question",
         "body": "How do I reset my account password?",
-        "expected_category": "query",
-        "expected_priority": "medium",
-        "expected_reply": "You can reset your password from the login page.",
     },
     {
+        "id": "newsletter-signup-request",
         "body": "Please add me to your newsletter mailing list.",
-        "expected_category": "request",
-        "expected_priority": "low",
-        "expected_reply": "You have been added to our mailing list.",
     },
 ]
 
 ACTION_SEQUENCE = ["classify_email", "set_priority", "generate_reply"]
 
 
-def _derive_expected(email_body: str) -> dict[str, str]:
+def derive_email_expectations(email_body: str) -> dict[str, str]:
     body_lower = email_body.lower()
 
-    if "refund" in body_lower or "unacceptable" in body_lower or "damaged" in body_lower:
+    if any(keyword in body_lower for keyword in ("refund", "unacceptable", "damaged")):
         category = "complaint"
-    elif any(kw in body_lower for kw in ("status", "how", "where", "when", "password")):
+    elif any(keyword in body_lower for keyword in ("status", "how", "where", "when", "password")):
         category = "query"
     else:
         category = "request"
@@ -88,7 +76,7 @@ class EmailTriageEnv:
     def reset(self) -> Observation:
         email_data = random.choice(self._emails)
         self._current_email = email_data
-        self._expected = _derive_expected(email_data["body"])
+        self._expected = derive_email_expectations(email_data["body"])
         self._observation = Observation(email=email_data["body"])
         self._step_index = 0
         self._total_reward = 0.0
@@ -141,6 +129,7 @@ class EmailTriageEnv:
 
     def state(self) -> dict[str, Any]:
         return {
+            "email_id": self._current_email.get("id", ""),
             "observation": self._observation.model_dump(),
             "step_index": self._step_index,
             "total_reward": round(self._total_reward, 2),
