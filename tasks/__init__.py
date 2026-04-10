@@ -1,3 +1,37 @@
-from .tasks import easy_task, medium_task, hard_task
-from .tasks import easy_grader, medium_grader, hard_grader
-from .tasks import TASK_REGISTRY, get_task, get_grader, run_all_tasks
+from .tasks import (
+    TASKS,
+    TASK_REGISTRY,
+    easy_grader,
+    easy_task,
+    generate_tasks,
+    get_grader,
+    get_task,
+    hard_grader,
+    hard_task,
+    list_tasks,
+    medium_grader,
+    medium_task,
+    model,
+    run_all_tasks,
+    run_task,
+    universal_grader,
+)
+
+__all__ = [
+    "TASKS",
+    "TASK_REGISTRY",
+    "easy_grader",
+    "easy_task",
+    "generate_tasks",
+    "get_grader",
+    "get_task",
+    "hard_grader",
+    "hard_task",
+    "list_tasks",
+    "medium_grader",
+    "medium_task",
+    "model",
+    "run_all_tasks",
+    "run_task",
+    "universal_grader",
+]
