@@ -1,61 +1,25 @@
 from __future__ import annotations
 
 import random
-from typing import Final
+from typing import Any, Final
+
+from env.environment import SAMPLE_EMAILS, derive_email_expectations
 
 DEFAULT_TASK_COUNT: Final[int] = 5
 DEFAULT_TASK_SEED: Final[int] = 20260410
 
-_EMAIL_SAMPLE_BANK: tuple[dict[str, str], ...] = (
-    {
-        "category": "spam",
-        "input": "Subject: Free vacation offer just for you. Claim your free reward before midnight and unlock our best offer.",
-    },
-    {
-        "category": "spam",
-        "input": "Subject: Exclusive offer. You have been selected for a free shopping voucher if you reply in the next hour.",
-    },
-    {
-        "category": "spam",
-        "input": "Subject: Mega offer from our partner network. Get free access to premium tools when you click today.",
-    },
-    {
-        "category": "important",
-        "input": "Subject: Bank security notice. We detected unusual activity on your bank account and need you to review it immediately.",
-    },
-    {
-        "category": "important",
-        "input": "Subject: Password reset confirmation. Your password was changed recently, so please verify this action if it was not you.",
-    },
-    {
-        "category": "important",
-        "input": "Subject: Urgent payroll issue. The finance team needs you to update your bank details before today's processing window closes.",
-    },
-    {
-        "category": "normal",
-        "input": "Subject: Team lunch tomorrow. Please confirm whether you can join the product team at noon.",
-    },
-    {
-        "category": "normal",
-        "input": "Subject: Weekly planning notes. Sharing the agenda for Monday's design review and next sprint kickoff.",
-    },
-    {
-        "category": "normal",
-        "input": "Subject: Shipping update. Your package is on the way and should arrive later this week.",
-    },
+TASK_MAX_SCORE: Final[float] = 0.95
+
+_EMAIL_SAMPLE_BANK: tuple[dict[str, str], ...] = tuple(
+    {"id": sample["id"], "input": sample["body"]} for sample in SAMPLE_EMAILS
 )
 
 
 def classify_email_text(text: str | None) -> str:
-    normalized = " ".join(str(text or "").strip().lower().split())
-
+    normalized = " ".join(str(text or "").strip().split())
     if not normalized:
-        return "normal"
-    if "free" in normalized or "offer" in normalized:
-        return "spam"
-    if "bank" in normalized or "password" in normalized:
-        return "important"
-    return "normal"
+        return "request"
+    return derive_email_expectations(normalized)["category"]
 
 
 def _coerce_task_count(n: int | None) -> int:
@@ -83,27 +47,35 @@ def _build_unique_input(sample_input: str, index: int, cycle: int) -> str:
     )
 
 
-def _build_task(sample: dict[str, str], index: int, cycle: int) -> dict[str, str]:
+def _build_task(sample: dict[str, str], index: int, cycle: int) -> dict[str, Any]:
     task_input = _build_unique_input(sample["input"], index, cycle)
-    expected_output = classify_email_text(task_input)
+    expected = derive_email_expectations(task_input)
 
     return {
         "id": f"email-task-{index:03d}",
+        "instruction": (
+            "Read the customer email and classify it as complaint, query, or request."
+        ),
         "input": task_input,
-        "expected_output": expected_output,
+        "expected_output": expected["category"],
+        "expected_category": expected["category"],
+        "expected_priority": expected["priority"],
+        "expected_reply": expected["reply"],
+        "benchmark": "email-triage-env",
+        "score": TASK_MAX_SCORE,
     }
 
 
 def generate_tasks(
     n: int = DEFAULT_TASK_COUNT,
     seed: int | None = DEFAULT_TASK_SEED,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     requested = _coerce_task_count(n)
     rng = random.Random(_coerce_seed(seed))
     sample_pool = list(_EMAIL_SAMPLE_BANK)
     rng.shuffle(sample_pool)
 
-    generated: list[dict[str, str]] = []
+    generated: list[dict[str, Any]] = []
     seen_inputs: set[str] = set()
     cursor = 0
 

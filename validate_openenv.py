@@ -48,7 +48,25 @@ def _load_task_bindings() -> list[dict[str, object]]:
 
 
 def _validate_score(score: object) -> bool:
-    return isinstance(score, float) and 0.0 < score <= 1.0
+    return isinstance(score, float) and 0.0 < score < 1.0
+
+
+def _extract_manifest_scores(task: dict[str, object]) -> list[float]:
+    scores: list[float] = []
+
+    direct_score = task.get("score")
+    if isinstance(direct_score, (int, float)):
+        scores.append(float(direct_score))
+
+    scoring = task.get("scoring")
+    if isinstance(scoring, dict):
+        for value in scoring.values():
+            if isinstance(value, (int, float)):
+                scores.append(float(value))
+    elif isinstance(scoring, (int, float)):
+        scores.append(float(scoring))
+
+    return scores
 
 
 def _restore_env(previous: dict[str, str | None]) -> None:
@@ -227,6 +245,24 @@ def main() -> None:
             all_ok = False
             continue
 
+        manifest_scores = _extract_manifest_scores(task)
+        if not manifest_scores:
+            print("    FAIL: no manifest task score found")
+            all_ok = False
+            continue
+
+        invalid_manifest_scores = [
+            score for score in manifest_scores if not _validate_score(score)
+        ]
+        if invalid_manifest_scores:
+            print(
+                "    FAIL: manifest task scores must be floats strictly within (0, 1), "
+                f"got {invalid_manifest_scores}"
+            )
+            all_ok = False
+            continue
+        print(f"    manifest scores={manifest_scores}")
+
         task_state: dict[str, object]
         if entry_point:
             module_name, function_name = entry_point.rsplit(":", 1)
@@ -247,9 +283,9 @@ def main() -> None:
         print(f"    score={score}")
 
         if _validate_score(score):
-            print(f"    OK: {score} is within (0, 1]")
+            print(f"    OK: {score} is within (0, 1)")
         else:
-            print(f"    FAIL: score must be float in (0, 1], got {score!r}")
+            print(f"    FAIL: score must be float in (0, 1), got {score!r}")
             all_ok = False
 
     print("\n[4] Inference source validation:")

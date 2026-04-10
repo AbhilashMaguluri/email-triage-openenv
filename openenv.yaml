@@ -52,37 +52,23 @@ tasks:
   - id: email-task-001
     entry_point: tasks.tasks:generated_task_1
     grader: tasks.tasks:generated_grader_1
-    description: Dynamically generated email triage task with a guaranteed grader binding.
+    description: Deterministic email-triage classification task with a dedicated grader.
     scoring:
-      label: 1.0
+      label: 0.95
 
   - id: email-task-002
     entry_point: tasks.tasks:generated_task_2
     grader: tasks.tasks:generated_grader_2
-    description: Dynamically generated email triage task with a guaranteed grader binding.
+    description: Deterministic email-triage classification task with a dedicated grader.
     scoring:
-      label: 1.0
+      label: 0.95
 
   - id: email-task-003
     entry_point: tasks.tasks:generated_task_3
     grader: tasks.tasks:generated_grader_3
-    description: Dynamically generated email triage task with a guaranteed grader binding.
+    description: Deterministic email-triage classification task with a dedicated grader.
     scoring:
-      label: 1.0
-
-  - id: email-task-004
-    entry_point: tasks.tasks:generated_task_4
-    grader: tasks.tasks:generated_grader_4
-    description: Dynamically generated email triage task with a guaranteed grader binding.
-    scoring:
-      label: 1.0
-
-  - id: email-task-005
-    entry_point: tasks.tasks:generated_task_5
-    grader: tasks.tasks:generated_grader_5
-    description: Dynamically generated email triage task with a guaranteed grader binding.
-    scoring:
-      label: 1.0
+      label: 0.95
 
 build:
   dockerfile: Dockerfile
