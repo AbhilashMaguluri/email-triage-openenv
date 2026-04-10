@@ -1,81 +1,99 @@
-"""Validate that openenv.yaml tasks and graders are correctly detected."""
-import yaml
+from __future__ import annotations
+
 import importlib
 import sys
 
-print("=" * 60)
-print("VALIDATION: OpenEnv Tasks & Graders")
-print("=" * 60)
+import yaml
 
-# 1. Parse openenv.yaml
-with open("openenv.yaml") as f:
-    cfg = yaml.safe_load(f)
 
-tasks_cfg = cfg.get("tasks", [])
-print(f"\n[1] Tasks in openenv.yaml: {len(tasks_cfg)} found")
+def _load_tasks_config() -> list[dict[str, str]]:
+    with open("openenv.yaml", encoding="utf-8") as handle:
+        config = yaml.safe_load(handle) or {}
 
-# Handle both list and dict formats
-if isinstance(tasks_cfg, dict):
-    tasks_list = [{"id": k, **v} for k, v in tasks_cfg.items()]
-elif isinstance(tasks_cfg, list):
-    tasks_list = tasks_cfg
-else:
-    print("FAIL: tasks must be a list or dict!")
-    sys.exit(1)
+    tasks_config = config.get("tasks", [])
+    if isinstance(tasks_config, dict):
+        return [{"id": key, **value} for key, value in tasks_config.items()]
+    if isinstance(tasks_config, list):
+        return tasks_config
+    raise TypeError("openenv.yaml field 'tasks' must be a list or dict")
 
-assert len(tasks_list) >= 3, f"FAIL: need >= 3 tasks, got {len(tasks_list)}"
-print(f"    OK: {len(tasks_list)} tasks found (>= 3)")
 
-# 2. Verify each entry_point and grader is importable
-all_ok = True
-for task in tasks_list:
-    name = task.get("id", "unknown")
-    ep = task.get("entry_point", "")
-    gr = task.get("grader", "")
+def _load_task_bindings() -> list[dict[str, object]]:
+    tasks_module = importlib.import_module("tasks.tasks")
+    task_bindings = getattr(tasks_module, "TASKS", [])
+    if not isinstance(task_bindings, list):
+        raise TypeError("tasks.tasks:TASKS must be a list")
+    return task_bindings
 
-    if not gr:
-        print(f"\n[2] Task '{name}': FAIL - no grader defined")
-        all_ok = False
-        continue
 
-    print(f"\n[2] Task '{name}':")
+def _validate_score(score: object) -> bool:
+    return isinstance(score, float) and 0.0 < score <= 1.0
 
-    # Import and call entry_point (if defined)
-    if ep:
-        mod_ep, fn_ep = ep.rsplit(":", 1)
-        m1 = importlib.import_module(mod_ep)
-        func_task = getattr(m1, fn_ep)
-        state = func_task()
-        print(f"    entry_point={ep} -> callable={callable(func_task)}")
-        print(f"    state type={type(state).__name__}")
+
+def main() -> None:
+    print("=" * 60)
+    print("VALIDATION: OpenEnv Tasks & Graders")
+    print("=" * 60)
+
+    tasks_list = _load_tasks_config()
+    print(f"\n[1] Tasks in openenv.yaml: {len(tasks_list)} found")
+    if len(tasks_list) < 3:
+        raise AssertionError(f"FAIL: need >= 3 tasks, got {len(tasks_list)}")
+    print(f"    OK: {len(tasks_list)} tasks found (>= 3)")
+
+    task_bindings = _load_task_bindings()
+    print(f"\n[2] Dynamic TASKS bindings: {len(task_bindings)} found")
+    if len(task_bindings) < 3:
+        raise AssertionError(
+            f"FAIL: need >= 3 task bindings, got {len(task_bindings)}"
+        )
+
+    all_ok = True
+    for task in tasks_list:
+        task_id = task.get("id", "unknown")
+        entry_point = task.get("entry_point", "")
+        grader_path = task.get("grader", "")
+
+        print(f"\n[3] Task '{task_id}':")
+
+        if not grader_path:
+            print("    FAIL: no grader defined")
+            all_ok = False
+            continue
+
+        task_state: dict[str, object]
+        if entry_point:
+            module_name, function_name = entry_point.rsplit(":", 1)
+            module = importlib.import_module(module_name)
+            task_callable = getattr(module, function_name)
+            task_state = task_callable()
+            print(f"    entry_point={entry_point} -> callable={callable(task_callable)}")
+            print(f"    state type={type(task_state).__name__}")
+        else:
+            task_state = {}
+            print("    entry_point=None (testing grader with empty state)")
+
+        module_name, function_name = grader_path.rsplit(":", 1)
+        module = importlib.import_module(module_name)
+        grader_callable = getattr(module, function_name)
+        score = grader_callable(task_state)
+        print(f"    grader={grader_path} -> callable={callable(grader_callable)}")
+        print(f"    score={score}")
+
+        if _validate_score(score):
+            print(f"    OK: {score} is within (0, 1]")
+        else:
+            print(f"    FAIL: score must be float in (0, 1], got {score!r}")
+            all_ok = False
+
+    print("\n" + "=" * 60)
+    if all_ok:
+        print("ALL CHECKS PASSED")
     else:
-        state = {}
-        print(f"    entry_point=None (testing grader with empty state)")
+        print("SOME CHECKS FAILED")
+        sys.exit(1)
+    print("=" * 60)
 
-    # Import and call grader
-    mod_gr, fn_gr = gr.rsplit(":", 1)
-    m2 = importlib.import_module(mod_gr)
-    func_grader = getattr(m2, fn_gr)
 
-    # Test grader with the task state
-    score = func_grader(state)
-    print(f"    grader={gr} -> callable={callable(func_grader)}")
-    print(f"    score={score}")
-
-    # Validate score range — STRICTLY between 0 and 1
-    if not isinstance(score, float):
-        print(f"    FAIL: score must be float, got {type(score)}")
-        all_ok = False
-    elif score <= 0.0 or score >= 1.0:
-        print(f"    FAIL: score {score} not in (0, 1)")
-        all_ok = False
-    else:
-        print(f"    OK: {score} is strictly in (0, 1)")
-
-print("\n" + "=" * 60)
-if all_ok:
-    print("ALL CHECKS PASSED")
-else:
-    print("SOME CHECKS FAILED")
-    sys.exit(1)
-print("=" * 60)
+if __name__ == "__main__":
+    main()
