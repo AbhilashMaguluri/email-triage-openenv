@@ -17,7 +17,7 @@ TASK_NAME = "email-triage"
 BENCHMARK_NAME = "email-triage-env"
 REQUEST_TIMEOUT_SECONDS = 5.0
 MAX_STEPS = len(ACTION_SEQUENCE)
-SUCCESS_REWARD = 1.0
+SUCCESS_REWARD = 0.90
 
 SYSTEM_PROMPT = """\
 You are an email triage agent. You process customer emails in a strict 3-step pipeline.
