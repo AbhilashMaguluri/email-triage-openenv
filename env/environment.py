@@ -95,7 +95,7 @@ class EmailTriageEnv:
         self.last_action_error = None
 
         if action.action_type != expected_action:
-            reward = -0.2
+            reward = -0.15
             info["error"] = f"Expected '{expected_action}', got '{action.action_type}'"
             self.last_action_error = info["error"]
             self._total_reward += reward
@@ -151,14 +151,14 @@ class EmailTriageEnv:
             self._observation.category = provided
             info["match"] = True
             self.last_action_error = None
-            return 0.4, info
+            return 0.35, info
 
         self._observation.category = provided
         info["match"] = False
         info["expected"] = expected
         info["error"] = f"Expected category '{expected}', got '{provided}'"
         self.last_action_error = info["error"]
-        return -0.2, info
+        return -0.15, info
 
     def _handle_priority(
         self, action: Action, info: dict[str, Any]
@@ -170,14 +170,14 @@ class EmailTriageEnv:
             self._observation.priority = provided
             info["match"] = True
             self.last_action_error = None
-            return 0.3, info
+            return 0.30, info
 
         self._observation.priority = provided
         info["match"] = False
         info["expected"] = expected
         info["error"] = f"Expected priority '{expected}', got '{provided}'"
         self.last_action_error = info["error"]
-        return -0.2, info
+        return -0.15, info
 
     def _handle_reply(
         self, action: Action, info: dict[str, Any]
@@ -189,11 +189,11 @@ class EmailTriageEnv:
             self._observation.reply = provided
             info["match"] = True
             self.last_action_error = None
-            return 0.3, info
+            return 0.30, info
 
         self._observation.reply = provided
         info["match"] = False
         info["expected"] = expected
         info["error"] = f"Expected reply '{expected}', got '{provided}'"
         self.last_action_error = info["error"]
-        return -0.2, info
+        return -0.15, info

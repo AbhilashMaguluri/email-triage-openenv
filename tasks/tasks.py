@@ -1,258 +1,202 @@
+"""
+Static task and grader definitions for OpenEnv email-triage-env.
+
+Each task is a plain callable that returns a dict.
+Each grader is a plain callable that accepts any arguments and returns
+a float strictly in (0, 1).
+"""
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
-from grader import safe_grade
-from task_generator import (
-    DEFAULT_TASK_COUNT,
-    DEFAULT_TASK_SEED,
-    generate_tasks as _generate_tasks,
-)
+# ---------------------------------------------------------------------------
+# Grader helpers
+# ---------------------------------------------------------------------------
 
-TaskDict = dict[str, Any]
-GraderFn = Callable[..., float]
-PASSING_SCORE = 0.75
+_MIN_SCORE = 0.05
+_MAX_SCORE = 0.95
 
 
-class TaskObject(dict):
-    def __call__(self) -> dict[str, Any]:
-        return dict(self)
+def _clamp(score: float) -> float:
+    """Ensure score is strictly within (0, 1)."""
+    if score <= 0.0:
+        return _MIN_SCORE
+    if score >= 1.0:
+        return _MAX_SCORE
+    return score
 
 
-def generate_tasks(
-    n: int = DEFAULT_TASK_COUNT,
-    seed: int | None = DEFAULT_TASK_SEED,
-) -> list[TaskDict]:
-    tasks = _generate_tasks(n=n, seed=seed)
-    if len(tasks) < 3:
-        raise ValueError(
-            f"Not enough tasks with graders: generated {len(tasks)} tasks, expected at least 3"
-        )
-    return tasks
+def _compare(output: str, expected: str) -> float:
+    out = output.strip().lower()
+    exp = expected.strip().lower()
+    if out == exp:
+        return 0.85
+    if out in exp or exp in out:
+        return 0.65
+    return 0.15
 
 
-def _clone_task(task: TaskDict) -> TaskDict:
-    cloned: TaskDict = TaskObject(
-        {
-            "id": str(task["id"]),
-            "instruction": str(task.get("instruction", "")),
-            "input": str(task["input"]),
-            "expected_output": str(task["expected_output"]),
-            "expected_category": str(
-                task.get("expected_category", task["expected_output"])
-            ),
-            "expected_priority": str(task.get("expected_priority", "")),
-            "expected_reply": str(task.get("expected_reply", "")),
-            "benchmark": str(task.get("benchmark", "email-triage-env")),
-            "score": float(task.get("score", 0.95)),
-        }
-    )
-    return cloned
+def _extract_output(args: tuple, kwargs: dict) -> str:
+    """Best-effort extraction of the model output from any calling convention."""
+    # kwargs style: grader(output="...", expected="...")
+    for key in ("output", "prediction", "result", "content", "model_output"):
+        val = kwargs.get(key)
+        if val is not None:
+            return str(val)
+
+    # single-dict style: grader({"output": "...", ...})
+    if args and isinstance(args[0], dict):
+        d = args[0]
+        for key in ("output", "prediction", "result", "content", "model_output"):
+            val = d.get(key)
+            if val is not None:
+                return str(val)
+
+    # positional style: grader("output_value")
+    if args and isinstance(args[0], str):
+        return args[0]
+
+    return ""
 
 
-def _default_task_bank() -> list[TaskDict]:
-    return [_clone_task(task) for task in generate_tasks()]
+# ---------------------------------------------------------------------------
+# Task 1: complaint classification
+# ---------------------------------------------------------------------------
+
+_TASK_1 = {
+    "id": "email-task-001",
+    "instruction": "Classify the email as complaint, query, or request.",
+    "input": "I want a refund for my last order. The product was damaged.",
+    "expected_output": "complaint",
+    "benchmark": "email-triage-env",
+    "score": 0.85,
+}
 
 
-def _extract_info(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
-    info: dict[str, Any] = {}
-    info.update(kwargs)
-
-    for value in args:
-        if isinstance(value, dict):
-            info.update(value)
-        elif value is not None and "output" not in info:
-            info["output"] = value
-
-    return info
+def generated_task_1() -> dict[str, Any]:
+    return dict(_TASK_1)
 
 
-def _resolve_output_expected(
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    fallback_expected: str | None = None,
-) -> tuple[Any, Any]:
-    info = _extract_info(args, kwargs)
-
-    output = None
-    for key in ("output", "prediction", "result", "label", "content", "model_output"):
-        if info.get(key) is not None:
-            output = info.get(key)
-            break
-
-    expected = None
-    for key in ("expected", "expected_output", "target", "label_expected"):
-        if info.get(key) is not None:
-            expected = info.get(key)
-            break
-
-    if expected is None:
-        expected = fallback_expected
-    if output is None and expected is not None:
-        output = expected
-
-    return output, expected
+def generated_grader_1(*args: Any, **kwargs: Any) -> float:
+    output = _extract_output(args, kwargs)
+    if not output:
+        return 0.5  # no output provided -> mid-range default
+    return _clamp(_compare(output, _TASK_1["expected_output"]))
 
 
-def universal_grader(*args: Any, **kwargs: Any) -> float:
-    output, expected = _resolve_output_expected(args=args, kwargs=kwargs)
-    return safe_grade(output=output, expected=expected)
+# ---------------------------------------------------------------------------
+# Task 2: query classification
+# ---------------------------------------------------------------------------
+
+_TASK_2 = {
+    "id": "email-task-002",
+    "instruction": "Classify the email as complaint, query, or request.",
+    "input": "Can you tell me the status of my order #12345?",
+    "expected_output": "query",
+    "benchmark": "email-triage-env",
+    "score": 0.85,
+}
 
 
-DEFAULT_TASK_OBJECTS: list[TaskDict] = _default_task_bank()
+def generated_task_2() -> dict[str, Any]:
+    return dict(_TASK_2)
 
 
-def _build_task_grader(task: TaskDict) -> GraderFn:
-    expected_output = task["expected_output"]
-
-    def _grader(*args: Any, **kwargs: Any) -> float:
-        output, expected = _resolve_output_expected(
-            args=args,
-            kwargs=kwargs,
-            fallback_expected=expected_output,
-        )
-        return safe_grade(output=output, expected=expected)
-
-    return _grader
+def generated_grader_2(*args: Any, **kwargs: Any) -> float:
+    output = _extract_output(args, kwargs)
+    if not output:
+        return 0.5
+    return _clamp(_compare(output, _TASK_2["expected_output"]))
 
 
-TASKS: list[dict[str, Any]] = []
-TASK_REGISTRY: dict[str, dict[str, Any]] = {}
-ENTRYPOINT_NAMES: list[str] = []
+# ---------------------------------------------------------------------------
+# Task 3: request classification
+# ---------------------------------------------------------------------------
+
+_TASK_3 = {
+    "id": "email-task-003",
+    "instruction": "Classify the email as complaint, query, or request.",
+    "input": "I'd like to request a demo of your enterprise plan.",
+    "expected_output": "request",
+    "benchmark": "email-triage-env",
+    "score": 0.85,
+}
 
 
-def _make_task_loader(task_snapshot: TaskDict) -> Callable[[], TaskDict]:
-    def _loader() -> TaskDict:
-        return _clone_task(task_snapshot)
-
-    return _loader
+def generated_task_3() -> dict[str, Any]:
+    return dict(_TASK_3)
 
 
-for index, task in enumerate(DEFAULT_TASK_OBJECTS, start=1):
-    task_copy = _clone_task(task)
-    grader = _build_task_grader(task_copy)
-    task_name = f"generated_task_{index}"
-    grader_name = f"generated_grader_{index}"
-    task_loader = _make_task_loader(task_copy)
-
-    task_loader.__name__ = task_name
-    grader.__name__ = grader_name
-
-    globals()[task_name] = task_loader
-    globals()[grader_name] = grader
-
-    ENTRYPOINT_NAMES.append(task_name)
-    TASKS.append(
-        {
-            "task": task_loader(),
-            "task_fn": task_loader,
-            "grader": grader,
-            "score": task_copy["score"],
-        }
-    )
-    TASK_REGISTRY[task_copy["id"]] = {
-        "task": task_loader,
-        "grader": grader,
-        "score": task_copy["score"],
-    }
+def generated_grader_3(*args: Any, **kwargs: Any) -> float:
+    output = _extract_output(args, kwargs)
+    if not output:
+        return 0.5
+    return _clamp(_compare(output, _TASK_3["expected_output"]))
 
 
-def _task_from_index(index: int) -> TaskDict:
-    if index < 1 or index > len(DEFAULT_TASK_OBJECTS):
-        raise IndexError(
-            f"Task index out of range: {index}. Available range: 1..{len(DEFAULT_TASK_OBJECTS)}"
-        )
-    return _clone_task(DEFAULT_TASK_OBJECTS[index - 1])
+# ---------------------------------------------------------------------------
+# Task 4: another complaint
+# ---------------------------------------------------------------------------
+
+_TASK_4 = {
+    "id": "email-task-004",
+    "instruction": "Classify the email as complaint, query, or request.",
+    "input": "This is unacceptable! I demand a refund immediately.",
+    "expected_output": "complaint",
+    "benchmark": "email-triage-env",
+    "score": 0.85,
+}
 
 
-def list_tasks() -> list[TaskDict]:
-    return [_clone_task(task) for task in DEFAULT_TASK_OBJECTS]
+def generated_task_4() -> dict[str, Any]:
+    return dict(_TASK_4)
 
 
-def get_task(name: str | int) -> TaskDict:
-    if isinstance(name, int):
-        return _task_from_index(name)
-
-    task_name = str(name).strip().lower()
-    alias_map = {
-        "easy": 1,
-        "medium": 2,
-        "hard": 3,
-    }
-    if task_name in alias_map:
-        return _task_from_index(alias_map[task_name])
-
-    for task in DEFAULT_TASK_OBJECTS:
-        if task["id"] == task_name:
-            return _clone_task(task)
-
-    raise KeyError(
-        f"Unknown task: {name}. Available ids: {[task['id'] for task in DEFAULT_TASK_OBJECTS]}"
-    )
+def generated_grader_4(*args: Any, **kwargs: Any) -> float:
+    output = _extract_output(args, kwargs)
+    if not output:
+        return 0.5
+    return _clamp(_compare(output, _TASK_4["expected_output"]))
 
 
-def get_grader(name: str | int) -> GraderFn:
-    if isinstance(name, int):
-        task = _task_from_index(name)
-        return TASK_REGISTRY[task["id"]]["grader"]
+# ---------------------------------------------------------------------------
+# Task 5: another query
+# ---------------------------------------------------------------------------
 
-    task_name = str(name).strip().lower()
-    alias_map = {
-        "easy": 1,
-        "medium": 2,
-        "hard": 3,
-    }
-    if task_name in alias_map:
-        task = _task_from_index(alias_map[task_name])
-        return TASK_REGISTRY[task["id"]]["grader"]
-
-    if task_name in TASK_REGISTRY:
-        return TASK_REGISTRY[task_name]["grader"]
-
-    raise KeyError(
-        f"Unknown grader for task: {name}. Available ids: {list(TASK_REGISTRY.keys())}"
-    )
+_TASK_5 = {
+    "id": "email-task-005",
+    "instruction": "Classify the email as complaint, query, or request.",
+    "input": "How do I reset my account password?",
+    "expected_output": "query",
+    "benchmark": "email-triage-env",
+    "score": 0.85,
+}
 
 
-def model(input_text: str | None) -> str:
-    normalized = " ".join(str(input_text or "").strip().split())
-    if not normalized:
-        return "request"
-
-    normalized_lower = normalized.lower()
-    if any(keyword in normalized_lower for keyword in ("refund", "unacceptable", "damaged")):
-        return "complaint"
-    if any(keyword in normalized_lower for keyword in ("status", "how", "where", "when", "password")):
-        return "query"
-    return "request"
+def generated_task_5() -> dict[str, Any]:
+    return dict(_TASK_5)
 
 
-def run_task(task_name: str | int | TaskDict) -> dict[str, Any]:
-    task = get_task(task_name) if not isinstance(task_name, dict) else _clone_task(task_name)
-    grader = get_grader(task["id"])
-
-    try:
-        output = model(task["input"])
-    except Exception:
-        output = ""
-
-    score = grader(output=output, expected_output=task["expected_output"])
-    return {
-        "task": task,
-        "output": output,
-        "score": score,
-        "passed": score >= PASSING_SCORE,
-    }
+def generated_grader_5(*args: Any, **kwargs: Any) -> float:
+    output = _extract_output(args, kwargs)
+    if not output:
+        return 0.5
+    return _clamp(_compare(output, _TASK_5["expected_output"]))
 
 
-def run_all_tasks() -> dict[str, dict[str, Any]]:
-    results: dict[str, dict[str, Any]] = {}
-    for task in DEFAULT_TASK_OBJECTS:
-        result = run_task(task)
-        results[task["id"]] = result
-    return results
+# ---------------------------------------------------------------------------
+# Registry (for internal use)
+# ---------------------------------------------------------------------------
 
+TASKS = [
+    {"task_fn": generated_task_1, "grader": generated_grader_1, "score": 0.85},
+    {"task_fn": generated_task_2, "grader": generated_grader_2, "score": 0.85},
+    {"task_fn": generated_task_3, "grader": generated_grader_3, "score": 0.85},
+    {"task_fn": generated_task_4, "grader": generated_grader_4, "score": 0.85},
+    {"task_fn": generated_task_5, "grader": generated_grader_5, "score": 0.85},
+]
 
+# Convenience aliases
 easy_task = generated_task_1
 medium_task = generated_task_2
 hard_task = generated_task_3

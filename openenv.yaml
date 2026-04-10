@@ -46,29 +46,38 @@ environment:
         type: string
         nullable: true
   max_steps: 10
-  max_reward: 1.0
+  max_reward: 0.95
 
 tasks:
   - id: email-task-001
     entry_point: tasks.tasks:generated_task_1
     grader: tasks.tasks:generated_grader_1
-    description: Deterministic email-triage classification task with a dedicated grader.
-    scoring:
-      label: 0.95
+    description: Classify a complaint email.
+    scoring: 0.85
 
   - id: email-task-002
     entry_point: tasks.tasks:generated_task_2
     grader: tasks.tasks:generated_grader_2
-    description: Deterministic email-triage classification task with a dedicated grader.
-    scoring:
-      label: 0.95
+    description: Classify a query email.
+    scoring: 0.85
 
   - id: email-task-003
     entry_point: tasks.tasks:generated_task_3
     grader: tasks.tasks:generated_grader_3
-    description: Deterministic email-triage classification task with a dedicated grader.
-    scoring:
-      label: 0.95
+    description: Classify a request email.
+    scoring: 0.85
+
+  - id: email-task-004
+    entry_point: tasks.tasks:generated_task_4
+    grader: tasks.tasks:generated_grader_4
+    description: Classify another complaint email.
+    scoring: 0.85
+
+  - id: email-task-005
+    entry_point: tasks.tasks:generated_task_5
+    grader: tasks.tasks:generated_grader_5
+    description: Classify another query email.
+    scoring: 0.85
 
 build:
   dockerfile: Dockerfile
