@@ -83,6 +83,7 @@ class EmailTriageEnv:
         self._total_reward: float = 0.0
         self._done: bool = True
         self._expected: dict[str, str] = {}
+        self.last_action_error: str | None = None
 
     def reset(self) -> Observation:
         email_data = random.choice(self._emails)
@@ -92,19 +93,23 @@ class EmailTriageEnv:
         self._step_index = 0
         self._total_reward = 0.0
         self._done = False
+        self.last_action_error = None
         return self._observation.model_copy()
 
     def step(self, action: Action) -> StepResult:
         if self._done:
+            self.last_action_error = "Episode is done. Call reset() before stepping."
             raise RuntimeError("Episode is done. Call reset() before stepping.")
 
         expected_action = ACTION_SEQUENCE[self._step_index]
         reward = 0.0
         info: dict[str, Any] = {"step": self._step_index + 1}
+        self.last_action_error = None
 
         if action.action_type != expected_action:
             reward = -0.2
             info["error"] = f"Expected '{expected_action}', got '{action.action_type}'"
+            self.last_action_error = info["error"]
             self._total_reward += reward
             return StepResult(
                 observation=self._observation.model_copy(),
@@ -141,7 +146,11 @@ class EmailTriageEnv:
             "total_reward": round(self._total_reward, 2),
             "done": self._done,
             "expected": self._expected,
+            "last_action_error": self.last_action_error,
         }
+
+    def close(self) -> None:
+        self._done = True
 
     def _handle_classify(
         self, action: Action, info: dict[str, Any]
@@ -152,11 +161,14 @@ class EmailTriageEnv:
         if provided == expected:
             self._observation.category = provided
             info["match"] = True
+            self.last_action_error = None
             return 0.4, info
 
         self._observation.category = provided
         info["match"] = False
         info["expected"] = expected
+        info["error"] = f"Expected category '{expected}', got '{provided}'"
+        self.last_action_error = info["error"]
         return -0.2, info
 
     def _handle_priority(
@@ -168,11 +180,14 @@ class EmailTriageEnv:
         if provided == expected:
             self._observation.priority = provided
             info["match"] = True
+            self.last_action_error = None
             return 0.3, info
 
         self._observation.priority = provided
         info["match"] = False
         info["expected"] = expected
+        info["error"] = f"Expected priority '{expected}', got '{provided}'"
+        self.last_action_error = info["error"]
         return -0.2, info
 
     def _handle_reply(
@@ -184,9 +199,12 @@ class EmailTriageEnv:
         if provided == expected:
             self._observation.reply = provided
             info["match"] = True
+            self.last_action_error = None
             return 0.3, info
 
         self._observation.reply = provided
         info["match"] = False
         info["expected"] = expected
+        info["error"] = f"Expected reply '{expected}', got '{provided}'"
+        self.last_action_error = info["error"]
         return -0.2, info

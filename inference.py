@@ -2,62 +2,71 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from typing import Any
 
 from openai import OpenAI
 
-from env.environment import EmailTriageEnv, ACTION_SEQUENCE
+from env.environment import ACTION_SEQUENCE, EmailTriageEnv
 from env.models import Action, Observation
 
-# ── Environment Variables (EXACT names & defaults) ────────────
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.groq.com/openai/v1")
-API_KEY = os.environ.get("API_KEY", "")
-MODEL_NAME = os.environ.get("MODEL_NAME", "llama-3.3-70b-versatile")
-HF_TOKEN = os.environ.get("HF_TOKEN")
-
-# ── Constants ─────────────────────────────────────────────────
-
-MAX_STEPS = 10
-MAX_TOTAL_REWARD = 1.0
-SUCCESS_THRESHOLD = 0.8
-
-# ── System Prompt ─────────────────────────────────────────────
+TASK_NAME = "email-triage"
+BENCHMARK_NAME = "email-triage-env"
+REQUEST_TIMEOUT_SECONDS = 5.0
+MAX_STEPS = len(ACTION_SEQUENCE)
+SUCCESS_REWARD = 1.0
 
 SYSTEM_PROMPT = """\
 You are an email triage agent. You process customer emails in a strict 3-step pipeline.
 
-## Pipeline
+Step 1 - classify_email:
+- Return exactly one category: complaint, query, or request.
+- "refund", "unacceptable", and "damaged" indicate complaint.
+- "status", "how", "where", "when", and "password" indicate query.
+- Everything else is request.
 
-Step 1 - classify_email: Classify the email into exactly one category.
-  Categories: complaint, query, request
-  Rules:
-    - "refund", "unacceptable", "damaged" -> complaint
-    - "status", "how", "where", "when", "password" -> query
-    - everything else -> request
+Step 2 - set_priority:
+- complaint -> high
+- query -> medium
+- request -> low
 
-Step 2 - set_priority: Assign a priority based on the category.
-  Rules:
-    - complaint -> high
-    - query    -> medium
-    - request  -> low
+Step 3 - generate_reply:
+- high -> "We are processing your refund."
+- medium -> "Your query has been noted and we will respond shortly."
+- low -> "We have received your request and will follow up."
 
-Step 3 - generate_reply: Generate the reply based on the priority.
-  Rules:
-    - high   -> "We are processing your refund."
-    - medium -> "Your query has been noted and we will respond shortly."
-    - low    -> "We have received your request and will follow up."
-
-## Response Format
-
-Respond with ONLY a JSON object (no markdown, no explanation):
+Respond with only compact JSON:
 {"action_type": "<action>", "content": "<value>"}
-
-Where <action> is the next required action in the pipeline.\
 """
 
-# ── Action Helpers ────────────────────────────────────────────
+
+def _build_client() -> OpenAI:
+    if HF_TOKEN is None:
+        raise ValueError("HF_TOKEN environment variable is required")
+
+    return OpenAI(
+        base_url=API_BASE_URL,
+        api_key=HF_TOKEN,
+        max_retries=0,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+
+
+def _format_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _format_error(value: Any) -> str:
+    if value in (None, ""):
+        return "null"
+    return str(value).replace("\r", " ").replace("\n", " ")
+
+
+def _format_action(action: Action) -> str:
+    return f"{action.action_type}({repr(action.content or '')})"
 
 
 def _build_user_message(observation: Observation, step_index: int) -> str:
@@ -67,24 +76,23 @@ def _build_user_message(observation: Observation, step_index: int) -> str:
     if observation.priority:
         parts.append(f"Assigned priority: {observation.priority}")
 
-    next_action = ACTION_SEQUENCE[step_index] if step_index < len(ACTION_SEQUENCE) else None
-    if next_action:
-        parts.append(f"\nNext required action: {next_action}")
+    if step_index < len(ACTION_SEQUENCE):
+        parts.append(f"Next required action: {ACTION_SEQUENCE[step_index]}")
 
     return "\n".join(parts)
 
 
 def _parse_action(raw: str) -> Action | None:
     try:
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        data = json.loads(text)
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        data = json.loads(cleaned)
         return Action(
-            action_type=data["action_type"],
-            content=data.get("content", ""),
+            action_type=str(data["action_type"]),
+            content="" if data.get("content") is None else str(data["content"]),
         )
-    except (json.JSONDecodeError, KeyError, Exception):
+    except Exception:
         return None
 
 
@@ -92,31 +100,30 @@ def _fallback_action(observation: Observation, step_index: int) -> Action:
     email_lower = observation.email.lower()
 
     if step_index == 0:
-        if any(kw in email_lower for kw in ("refund", "damaged", "unacceptable")):
-            category = "complaint"
-        elif any(kw in email_lower for kw in ("how", "status", "where", "when", "password")):
-            category = "query"
-        else:
-            category = "request"
-        return Action(action_type="classify_email", content=category)
+        if any(keyword in email_lower for keyword in ("refund", "damaged", "unacceptable")):
+            return Action(action_type="classify_email", content="complaint")
+        if any(keyword in email_lower for keyword in ("how", "status", "where", "when", "password")):
+            return Action(action_type="classify_email", content="query")
+        return Action(action_type="classify_email", content="request")
 
     if step_index == 1:
-        cat = (observation.category or "").lower()
         priority_map = {"complaint": "high", "query": "medium"}
-        return Action(action_type="set_priority", content=priority_map.get(cat, "low"))
+        return Action(
+            action_type="set_priority",
+            content=priority_map.get((observation.category or "").lower(), "low"),
+        )
 
-    pri = (observation.priority or "").lower()
     reply_map = {
         "high": "We are processing your refund.",
         "medium": "Your query has been noted and we will respond shortly.",
     }
     return Action(
         action_type="generate_reply",
-        content=reply_map.get(pri, "We have received your request and will follow up."),
+        content=reply_map.get(
+            (observation.priority or "").lower(),
+            "We have received your request and will follow up.",
+        ),
     )
-
-
-# ── Action Generation (OpenAI client) ────────────────────────
 
 
 def generate_action(
@@ -126,100 +133,104 @@ def generate_action(
     history: list[dict[str, str]],
 ) -> Action:
     expected_action = ACTION_SEQUENCE[step_index] if step_index < len(ACTION_SEQUENCE) else None
-    user_msg = _build_user_message(observation, step_index)
+    user_message = _build_user_message(observation, step_index)
 
     messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(history)
-    messages.append({"role": "user", "content": user_msg})
+    messages.append({"role": "user", "content": user_message})
 
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
             temperature=0.0,
-            max_tokens=256,
+            max_tokens=128,
         )
-        raw = response.choices[0].message.content or ""
-        action = _parse_action(raw)
+        raw_content = response.choices[0].message.content or ""
+        action = _parse_action(raw_content)
     except Exception:
         action = None
-        raw = ""
 
     if action is None or (expected_action and action.action_type != expected_action):
         action = _fallback_action(observation, step_index)
 
-    history.append({"role": "user", "content": user_msg})
-    history.append({"role": "assistant", "content": json.dumps({"action_type": action.action_type, "content": action.content})})
-
+    history.append({"role": "user", "content": user_message})
+    history.append(
+        {
+            "role": "assistant",
+            "content": json.dumps(
+                {"action_type": action.action_type, "content": action.content},
+                separators=(",", ":"),
+            ),
+        }
+    )
     return action
 
 
-# ── Episode Runner ────────────────────────────────────────────
-
-
-def run_episode(
-    env: EmailTriageEnv,
-    client: OpenAI,
-) -> dict[str, Any]:
-    t0 = time.perf_counter()
-
-    observation = env.reset()
-
-    # [START] — exactly one line
-    print(f"[START] task=email_triage env=email-triage-env model={MODEL_NAME}", flush=True)
-
-    history: list[dict[str, str]] = []
+def run_episode(env: EmailTriageEnv, client: OpenAI) -> dict[str, Any]:
     rewards: list[float] = []
-    actions_taken: list[dict[str, str]] = []
     steps_taken = 0
     done = False
+    observation: Observation | None = None
+    episode_error: str | None = None
+    history: list[dict[str, str]] = []
 
-    while not done and steps_taken < MAX_STEPS:
-        step_index = env._step_index
+    print(
+        f"[START] task={TASK_NAME} env={BENCHMARK_NAME} model={MODEL_NAME}",
+        flush=True,
+    )
 
-        action = generate_action(client, observation, step_index, history)
+    try:
+        observation = env.reset()
 
-        result = env.step(action)
-        steps_taken += 1
+        while not done and steps_taken < MAX_STEPS:
+            step_index = getattr(env, "_step_index", steps_taken)
+            action = generate_action(client, observation, step_index, history)
+            result = env.step(action)
 
-        rewards.append(result.reward)
-        actions_taken.append({"action_type": action.action_type, "content": action.content or ""})
+            steps_taken += 1
+            rewards.append(float(result.reward))
+            done = bool(result.done)
 
-        # [STEP] — one line per step
-        print(f"[STEP] step={steps_taken} action={action.action_type} reward={result.reward:.2f} done={result.done}", flush=True)
+            print(
+                "[STEP] "
+                f"step={steps_taken} "
+                f"action={_format_action(action)} "
+                f"reward={result.reward:.2f} "
+                f"done={_format_bool(done)} "
+                f"error={_format_error(getattr(env, 'last_action_error', None))}",
+                flush=True,
+            )
 
-        observation = result.observation
-        done = result.done
+            observation = result.observation
+    except Exception as exc:
+        episode_error = str(exc)
+    finally:
+        try:
+            env.close()
+        except Exception as close_exc:
+            if episode_error is None:
+                episode_error = str(close_exc)
 
-    total_reward = sum(rewards)
-    # Clamp strictly to (0, 1) — validator rejects 0.0 and 1.0
-    score = max(0.01, min(0.99, total_reward / MAX_TOTAL_REWARD))
-    success = score >= SUCCESS_THRESHOLD
-
-    # [END] — exactly one line
-    print(f"[END] success={success} steps={steps_taken} score={score:.4f}", flush=True)
+        total_reward = sum(rewards)
+        success = done and episode_error is None and total_reward >= SUCCESS_REWARD
+        reward_list = ",".join(f"{reward:.2f}" for reward in rewards)
+        print(
+            f"[END] success={_format_bool(success)} steps={steps_taken} rewards={reward_list}",
+            flush=True,
+        )
 
     return {
-        "score": round(score, 4),
-        "success": success,
-        "total_reward": round(total_reward, 2),
+        "success": done and episode_error is None and sum(rewards) >= SUCCESS_REWARD,
         "steps_taken": steps_taken,
         "rewards": rewards,
-        "actions": actions_taken,
-        "final_state": env.state(),
+        "error": episode_error,
     }
 
 
-# ── Main Entry Point ─────────────────────────────────────────
-
-
 def main() -> None:
-    client = OpenAI(
-        base_url=API_BASE_URL,
-        api_key=API_KEY,
-    )
-
     env = EmailTriageEnv()
+    client = _build_client()
     run_episode(env, client)
 
 
