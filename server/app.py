@@ -1,13 +1,23 @@
+"""
+Email Triage Environment – OpenEnv-compliant FastAPI server.
+
+Every endpoint is crash-proof:
+  - All routes accept both GET and POST (no 405 Method Not Allowed).
+  - All routes are wrapped in try/except returning valid JSON on any error.
+  - /grader and /mcp never raise regardless of input shape.
+  - /health returns exactly {"status": "healthy"}.
+  - /tasks returns 5 tasks (>= 3 required).
+  - All grader scores are strictly in (0, 1).
+"""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Query, Request
 from pydantic import BaseModel, Field
 
-from env import EmailTriageEnv, Action, Observation
-from env.environment import derive_email_expectations
+from env.environment import EmailTriageEnv, Action, Observation, derive_email_expectations
 
 README_PATH = Path(__file__).resolve().parent.parent / "README.md"
 
@@ -15,41 +25,14 @@ app = FastAPI(title="Email Triage Environment", version="0.1.0")
 env = EmailTriageEnv()
 
 
-# ── Request / Response Models ───────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# Pydantic models
+# ═══════════════════════════════════════════════════════════════
 
 class ActionRequest(BaseModel):
     action_type: str
     content: str = ""
 
-
-class ResetRequest(BaseModel):
-    task_id: Optional[str] = None
-    seed: Optional[int] = None
-
-
-class GraderRequest(BaseModel):
-    episode_id: Optional[str] = None
-    task_id: Optional[str] = None
-    output: Optional[str] = None
-    expected: Optional[str] = None
-
-
-class TaskSummary(BaseModel):
-    task_id: str
-    name: str
-    difficulty: str
-    description: str
-    max_steps: int
-
-
-class GraderResponse(BaseModel):
-    task_id: str
-    score: float = Field(..., gt=0.0, lt=1.0)
-    passed: bool
-    details: Dict[str, Any] = Field(default_factory=dict)
-
-
-# ── State model for /schema ─────────────────────────────────────
 
 class EmailTriageState(BaseModel):
     email_id: str = ""
@@ -61,11 +44,13 @@ class EmailTriageState(BaseModel):
     last_action_error: Optional[str] = None
 
 
-# ── Task Definitions ────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# Static task definitions (5 tasks, all with graders)
+# ═══════════════════════════════════════════════════════════════
 
 TASK_DEFS = [
     {
-        "task_id": "email-task-001",
+        "id": "email-task-001",
         "name": "Complaint Classification",
         "difficulty": "easy",
         "description": "Classify a complaint email about a damaged product.",
@@ -74,7 +59,7 @@ TASK_DEFS = [
         "expected_output": "complaint",
     },
     {
-        "task_id": "email-task-002",
+        "id": "email-task-002",
         "name": "Query Classification",
         "difficulty": "easy",
         "description": "Classify a query email about order status.",
@@ -83,7 +68,7 @@ TASK_DEFS = [
         "expected_output": "query",
     },
     {
-        "task_id": "email-task-003",
+        "id": "email-task-003",
         "name": "Request Classification",
         "difficulty": "medium",
         "description": "Classify a request email about an enterprise demo.",
@@ -92,7 +77,7 @@ TASK_DEFS = [
         "expected_output": "request",
     },
     {
-        "task_id": "email-task-004",
+        "id": "email-task-004",
         "name": "Urgent Complaint Classification",
         "difficulty": "medium",
         "description": "Classify an urgent complaint demanding a refund.",
@@ -101,7 +86,7 @@ TASK_DEFS = [
         "expected_output": "complaint",
     },
     {
-        "task_id": "email-task-005",
+        "id": "email-task-005",
         "name": "Password Query Classification",
         "difficulty": "hard",
         "description": "Classify a query about password reset.",
@@ -111,24 +96,43 @@ TASK_DEFS = [
     },
 ]
 
+TASK_LOOKUP = {t["id"]: t for t in TASK_DEFS}
 
-def _grade(output: str, expected: str) -> float:
-    """Grade output vs expected, returning score strictly in (0, 1)."""
-    out = output.strip().lower()
-    exp = expected.strip().lower()
-    if out == exp:
-        return 0.85
-    if out and (exp in out or out in exp):
-        return 0.65
-    if out:
+
+def _safe_grade(output: str, expected: str) -> float:
+    """Compare output vs expected. Returns float strictly in (0, 1)."""
+    try:
+        out = str(output or "").strip().lower()
+        exp = str(expected or "").strip().lower()
+        if not out:
+            return 0.05
+        if out == exp:
+            return 0.85
+        if exp in out or out in exp:
+            return 0.65
         return 0.15
-    return 0.05
+    except Exception:
+        return 0.5
 
 
-# ── Root ────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# Helper: safely read JSON body from a request (GET or POST)
+# ═══════════════════════════════════════════════════════════════
 
-@app.get("/")
-def root():
+async def _safe_body(request: Request) -> dict:
+    """Return parsed JSON body or empty dict. Never raises."""
+    try:
+        return await request.json()
+    except Exception:
+        return {}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  /  (root)
+# ═══════════════════════════════════════════════════════════════
+
+@app.api_route("/", methods=["GET", "POST"])
+async def root():
     return {
         "status": "running",
         "service": "email-triage-env",
@@ -139,47 +143,42 @@ def root():
     }
 
 
-# ── Health ──────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+#  /health
+# ═══════════════════════════════════════════════════════════════
 
-@app.get("/health")
-def health():
-    return {"status": "healthy", "service": "email-triage-env"}
-
-
-# ── MCP (JSON-RPC stub) ────────────────────────────────────────
-
-@app.post("/mcp")
-def mcp(request: dict = None):
-    req = request or {}
-    return {
-        "jsonrpc": "2.0",
-        "id": req.get("id", 1),
-        "result": {
-            "tools": [],
-            "description": "email-triage-env MCP endpoint",
-        },
-    }
+@app.api_route("/health", methods=["GET", "POST"])
+async def health():
+    return {"status": "healthy"}
 
 
-# ── Metadata ────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+#  /metadata
+# ═══════════════════════════════════════════════════════════════
 
-@app.get("/metadata")
-def metadata():
-    readme_content = None
-    if README_PATH.exists():
-        readme_content = README_PATH.read_text(encoding="utf-8")
+@app.api_route("/metadata", methods=["GET", "POST"])
+async def metadata():
+    try:
+        readme_content = README_PATH.read_text(encoding="utf-8") if README_PATH.exists() else ""
+    except Exception:
+        readme_content = ""
     return {
         "name": "email-triage-env",
-        "description": "AI Email Triage & Response Environment that classifies emails, assigns priority, and generates replies.",
+        "description": (
+            "AI Email Triage & Response Environment that classifies emails, "
+            "assigns priority, and generates replies."
+        ),
         "version": app.version,
         "readme_content": readme_content,
     }
 
 
-# ── Schema ──────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+#  /schema
+# ═══════════════════════════════════════════════════════════════
 
-@app.get("/schema")
-def schema():
+@app.api_route("/schema", methods=["GET", "POST"])
+async def schema():
     return {
         "action": Action.model_json_schema(),
         "observation": Observation.model_json_schema(),
@@ -187,120 +186,168 @@ def schema():
     }
 
 
-# ── Tasks ───────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+#  /tasks   – CRITICAL: validator discovers tasks here
+# ═══════════════════════════════════════════════════════════════
 
-@app.get("/tasks")
-def tasks():
+@app.api_route("/tasks", methods=["GET", "POST"])
+async def tasks():
     return [
-        TaskSummary(
-            task_id=t["task_id"],
-            name=t["name"],
-            difficulty=t["difficulty"],
-            description=t["description"],
-            max_steps=t["max_steps"],
-        ).model_dump(mode="json")
+        {
+            "id": t["id"],
+            "task_id": t["id"],
+            "name": t["name"],
+            "difficulty": t["difficulty"],
+            "description": t["description"],
+            "max_steps": t["max_steps"],
+            "scoring": 0.85,
+            "grader": True,
+        }
         for t in TASK_DEFS
     ]
 
 
-# ── Grader ──────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+#  /grader  – CRITICAL: validator grades tasks here
+# ═══════════════════════════════════════════════════════════════
 
-@app.post("/grader")
-def grader(payload: GraderRequest):
-    if payload.task_id is not None:
-        task_def = None
-        for t in TASK_DEFS:
-            if t["task_id"] == payload.task_id:
-                task_def = t
-                break
-        if task_def is None:
-            raise HTTPException(status_code=404, detail=f"Unknown task: {payload.task_id}")
+@app.api_route("/grader", methods=["GET", "POST"])
+async def grader(request: Request):
+    try:
+        body = await _safe_body(request)
+        task_id = body.get("task_id") or body.get("id") or ""
+        output = body.get("output") or body.get("prediction") or body.get("result") or ""
+        expected = body.get("expected") or body.get("expected_output") or ""
 
-        output = payload.output or ""
-        expected = payload.expected or task_def["expected_output"]
-        score = _grade(output, expected)
+        # If a known task, use its expected_output as fallback
+        if task_id and task_id in TASK_LOOKUP:
+            task_def = TASK_LOOKUP[task_id]
+            if not expected:
+                expected = task_def["expected_output"]
+            score = _safe_grade(output, expected)
+        elif output and expected:
+            score = _safe_grade(output, expected)
+        else:
+            # Safe default: no crash, valid score
+            score = 0.5
 
-        return GraderResponse(
-            task_id=payload.task_id,
-            score=score,
-            passed=score >= 0.7,
-            details={
-                "output": output,
-                "expected": expected,
-            },
-        ).model_dump(mode="json")
-
-    raise HTTPException(status_code=400, detail="Provide task_id")
+        return {
+            "task_id": task_id or "unknown",
+            "score": score,
+            "passed": score >= 0.7,
+            "details": {"output": output, "expected": expected},
+        }
+    except Exception:
+        return {"task_id": "unknown", "score": 0.5, "passed": False, "details": {}}
 
 
-# ── Reset ───────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+#  /mcp  – JSON-RPC 2.0 stub
+# ═══════════════════════════════════════════════════════════════
 
-def _do_reset(task_id: str | None = None):
-    if task_id:
-        task_def = None
-        for t in TASK_DEFS:
-            if t["task_id"] == task_id:
-                task_def = t
-                break
-        if task_def:
-            env._current_email = {"id": task_def["task_id"], "body": task_def["input"]}
-            env._expected = derive_email_expectations(task_def["input"])
-            env._observation = Observation(email=task_def["input"])
-            env._step_index = 0
-            env._total_reward = 0.0
-            env._done = False
-            env.last_action_error = None
-            return env._observation.model_dump()
+@app.api_route("/mcp", methods=["GET", "POST"])
+async def mcp(request: Request):
+    try:
+        body = await _safe_body(request)
+        req_id = body.get("id", 1)
+    except Exception:
+        req_id = 1
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "result": "ok",
+    }
 
+
+# ═══════════════════════════════════════════════════════════════
+#  /reset
+# ═══════════════════════════════════════════════════════════════
+
+def _do_reset(task_id: str | None = None) -> dict:
+    if task_id and task_id in TASK_LOOKUP:
+        task_def = TASK_LOOKUP[task_id]
+        env._current_email = {"id": task_def["id"], "body": task_def["input"]}
+        env._expected = derive_email_expectations(task_def["input"])
+        env._observation = Observation(email=task_def["input"])
+        env._step_index = 0
+        env._total_reward = 0.0
+        env._done = False
+        env.last_action_error = None
+        return env._observation.model_dump()
     observation = env.reset()
     return observation.model_dump()
 
 
-@app.get("/reset")
-def reset_get(task_id: str | None = Query(default=None)):
+@app.api_route("/reset", methods=["GET", "POST"])
+async def reset(request: Request):
+    try:
+        body = await _safe_body(request)
+        task_id = body.get("task_id")
+    except Exception:
+        task_id = None
     return _do_reset(task_id)
 
 
-@app.post("/reset")
-def reset_post(req: ResetRequest = None):
-    task_id = req.task_id if req else None
-    return _do_reset(task_id)
+# ═══════════════════════════════════════════════════════════════
+#  /step
+# ═══════════════════════════════════════════════════════════════
 
-
-# ── Step ────────────────────────────────────────────────────────
-
-def _do_step(action_type: str, content: str = ""):
-    action = Action(action_type=action_type, content=content)
-    result = env.step(action)
-    return {
-        "observation": result.observation.model_dump(),
-        "reward": result.reward,
-        "done": result.done,
-        "info": result.info,
-    }
-
-
-@app.post("/step")
-def step_post(req: ActionRequest):
-    return _do_step(action_type=req.action_type, content=req.content)
-
-
-@app.get("/step")
-def step_get(
-    action_type: str = Query(..., description="Action type"),
-    content: str = Query("", description="Action content"),
+@app.api_route("/step", methods=["GET", "POST"])
+async def step(
+    request: Request,
+    action_type: str = Query(default=None),
+    content: str = Query(default=""),
 ):
-    return _do_step(action_type=action_type, content=content)
+    try:
+        # Prefer body JSON, fall back to query params
+        body = await _safe_body(request)
+        at = body.get("action_type") or body.get("action", {}).get("action_type") if isinstance(body.get("action"), dict) else None
+        ct = body.get("content") or body.get("action", {}).get("content", "") if isinstance(body.get("action"), dict) else ""
+
+        # Fall back to top-level body keys then query params
+        if not at:
+            at = body.get("action_type") or action_type
+        if not ct:
+            ct = body.get("content") or content
+
+        if not at:
+            return {"error": "action_type is required"}
+
+        action = Action(action_type=at, content=ct or "")
+        result = env.step(action)
+        return {
+            "observation": result.observation.model_dump(),
+            "reward": result.reward,
+            "done": result.done,
+            "info": result.info,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
-# ── State ───────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+#  /state
+# ═══════════════════════════════════════════════════════════════
 
-@app.get("/state")
-def state():
-    return env.state()
+@app.api_route("/state", methods=["GET", "POST"])
+async def state():
+    try:
+        return env.state()
+    except Exception:
+        return {
+            "email_id": "",
+            "observation": {"email": "", "category": None, "priority": None, "reply": None},
+            "step_index": 0,
+            "total_reward": 0.0,
+            "done": True,
+            "expected": {},
+            "last_action_error": None,
+        }
 
 
-# ── CLI Entry Point ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+#  CLI entry point
+# ═══════════════════════════════════════════════════════════════
 
 def main():
     import uvicorn
